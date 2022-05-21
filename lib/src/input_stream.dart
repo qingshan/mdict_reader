@@ -3,8 +3,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 enum ByteOrder {
-  little_endian,
-  big_endian,
+  littleEndian,
+  bigEndian,
 }
 
 abstract class InputStream {
@@ -23,18 +23,18 @@ abstract class InputStream {
   /// Rewind the read head of the stream by the given number of bytes.
   void rewind([int length = 1]);
 
-  /// Move the read position by [count] bytes.
+  /// Move the read position by [length] bytes.
   void skip(int length);
 
   /// Read a single byte.
   int readByte();
 
-  /// Read [count] bytes from the stream.
-  Uint8List readBytes(int count);
+  /// Read [length] bytes from the stream.
+  Uint8List readBytes(int length);
 
   /// Read a null-terminated string, or if [len] is provided, that number of
   /// bytes returned as a string.
-  String readString({int size, bool utf8});
+  String readString({int length, bool utf8});
 
   /// Read a 16-bit word from the stream.
   int readUint16();
@@ -50,68 +50,67 @@ abstract class InputStream {
 
 /// A buffer that can be read as a stream of bytes
 class BytesInputStream extends InputStream {
-  Uint8List buffer;
-  int offset;
-  int start;
+  Uint8List _buffer;
+  int _offset;
+  int _start;
   ByteOrder byteOrder;
+  late int _length;
 
   /// Create a InputStream for reading from a List<int>
-  BytesInputStream(Uint8List data,
-      {this.byteOrder = ByteOrder.big_endian, int start = 0, int length})
-      : buffer =
-            Uint8List.view(data.buffer, data.offsetInBytes, data.lengthInBytes),
-        offset = start,
-        start = start {
-    _length = length ?? buffer.length;
-  }
-
+  BytesInputStream(Uint8List buffer,
+      {this.byteOrder = ByteOrder.bigEndian, int start = 0, int? length})
+      : _buffer = buffer,
+        _start = start,
+        _offset = start,
+        _length = length ?? buffer.length;
+  
   ///  The current read position relative to the start of the buffer.
   @override
-  int get position => offset - start;
+  int get position => _offset - _start;
 
   /// How many bytes are left in the stream.
   @override
-  int get length => _length - (offset - start);
+  int get length => _length - (_offset - _start);
 
   /// Is the current position at the end of the stream?
   @override
-  bool get isEOS => offset >= (start + _length);
+  bool get isEOS => _offset >= (_start + _length);
 
   /// Reset to the beginning of the stream.
   @override
   void reset() {
-    offset = start;
+    _offset = _start;
   }
 
   /// Rewind the read head of the stream by the given number of bytes.
   @override
   void rewind([int length = 1]) {
-    offset -= length;
-    if (offset < 0) {
-      offset = 0;
+    _offset -= length;
+    if (_offset < 0) {
+      _offset = 0;
     }
   }
 
   /// Access the buffer relative from the current position.
-  int operator [](int index) => buffer[offset + index];
+  int operator [](int index) => _buffer[_offset + index];
 
   /// Return a InputStream to read a subset of this stream.  It does not
   /// move the read position of this stream.  [position] is specified relative
   /// to the start of the buffer.  If [position] is not specified, the current
   /// read position is used. If [length] is not specified, the remainder of this
   /// stream is used.
-  InputStream subset([int position, int length]) {
+  InputStream subset([int? position, int? length]) {
     if (position == null) {
-      position = offset;
+      position = _offset;
     } else {
-      position += start;
+      position += _start;
     }
 
     if (length == null || length < 0) {
-      length = _length - (position - start);
+      length = _length - (position - _start);
     }
 
-    return BytesInputStream(buffer,
+    return BytesInputStream(_buffer,
         byteOrder: byteOrder, start: position, length: length);
   }
 
@@ -120,42 +119,42 @@ class BytesInputStream extends InputStream {
   /// returned is relative to the start of the buffer, or -1 if the [value]
   /// was not found.
   int indexOf(int value, [int offset = 0]) {
-    for (var i = this.offset + offset, end = this.offset + length;
+    for (var i = _offset + offset, end = _offset + length;
         i < end;
         ++i) {
-      if (buffer[i] == value) {
-        return i - start;
+      if (_buffer[i] == value) {
+        return i - _start;
       }
     }
     return -1;
   }
 
-  /// Move the read position by [count] bytes.
+  /// Move the read position by [length] bytes.
   @override
-  void skip(int count) {
-    offset += count;
+  void skip(int length) {
+    _offset += length;
   }
 
   /// Read a single byte.
   @override
   int readByte() {
-    return buffer[offset++];
+    return _buffer[_offset++];
   }
 
-  /// Read [count] bytes from the stream.
+  /// Read [length] bytes from the stream.
   @override
-  Uint8List readBytes(int count) {
-    final bytes = subset(offset - start, count);
-    offset += bytes.length;
+  Uint8List readBytes(int length) {
+    final bytes = subset(_offset - _start, length);
+    _offset += bytes.length;
     return bytes.toUint8List();
   }
 
   /// Read a null-terminated string, or if [len] is provided, that number of
   /// bytes returned as a string.
   @override
-  String readString({int size, bool utf8 = true}) {
+  String readString({int length = -1, bool utf8 = true}) {
     final codes = <int>[];
-    if (size == null) {
+    if (length == -1) {
       while (!isEOS) {
         var c = readByte();
         if (!utf8) {
@@ -168,12 +167,12 @@ class BytesInputStream extends InputStream {
         codes.add(c);
       }
     } else {
-      while (size > 0) {
+      while (length > 0) {
         var c = readByte();
-        size--;
+        length--;
         if (!utf8) {
           var c2 = readByte();
-          size--;
+          length--;
           c = (c2 << 8) | c;
         }
         if (c == 0) {
@@ -189,9 +188,9 @@ class BytesInputStream extends InputStream {
   /// Read a 16-bit word from the stream.
   @override
   int readUint16() {
-    final b1 = buffer[offset++] & 0xff;
-    final b2 = buffer[offset++] & 0xff;
-    if (byteOrder == ByteOrder.big_endian) {
+    final b1 = _buffer[_offset++] & 0xff;
+    final b2 = _buffer[_offset++] & 0xff;
+    if (byteOrder == ByteOrder.bigEndian) {
       return (b1 << 8) | b2;
     }
     return (b2 << 8) | b1;
@@ -200,11 +199,11 @@ class BytesInputStream extends InputStream {
   /// Read a 32-bit word from the stream.
   @override
   int readUint32() {
-    final b1 = buffer[offset++] & 0xff;
-    final b2 = buffer[offset++] & 0xff;
-    final b3 = buffer[offset++] & 0xff;
-    final b4 = buffer[offset++] & 0xff;
-    if (byteOrder == ByteOrder.big_endian) {
+    final b1 = _buffer[_offset++] & 0xff;
+    final b2 = _buffer[_offset++] & 0xff;
+    final b3 = _buffer[_offset++] & 0xff;
+    final b4 = _buffer[_offset++] & 0xff;
+    if (byteOrder == ByteOrder.bigEndian) {
       return (b1 << 24) | (b2 << 16) | (b3 << 8) | b4;
     }
     return (b4 << 24) | (b3 << 16) | (b2 << 8) | b1;
@@ -213,15 +212,15 @@ class BytesInputStream extends InputStream {
   /// Read a 64-bit word form the stream.
   @override
   int readUint64() {
-    final b1 = buffer[offset++] & 0xff;
-    final b2 = buffer[offset++] & 0xff;
-    final b3 = buffer[offset++] & 0xff;
-    final b4 = buffer[offset++] & 0xff;
-    final b5 = buffer[offset++] & 0xff;
-    final b6 = buffer[offset++] & 0xff;
-    final b7 = buffer[offset++] & 0xff;
-    final b8 = buffer[offset++] & 0xff;
-    if (byteOrder == ByteOrder.big_endian) {
+    final b1 = _buffer[_offset++] & 0xff;
+    final b2 = _buffer[_offset++] & 0xff;
+    final b3 = _buffer[_offset++] & 0xff;
+    final b4 = _buffer[_offset++] & 0xff;
+    final b5 = _buffer[_offset++] & 0xff;
+    final b6 = _buffer[_offset++] & 0xff;
+    final b7 = _buffer[_offset++] & 0xff;
+    final b8 = _buffer[_offset++] & 0xff;
+    if (byteOrder == ByteOrder.bigEndian) {
       return (b1 << 56) |
           (b2 << 48) |
           (b3 << 40) |
@@ -244,34 +243,31 @@ class BytesInputStream extends InputStream {
   @override
   Uint8List toUint8List() {
     var len = length;
-    if ((offset + len) > buffer.length) {
-      len = buffer.length - offset;
+    if ((_offset + len) > _buffer.length) {
+      len = _buffer.length - _offset;
     }
     final bytes =
-        Uint8List.view(buffer.buffer, buffer.offsetInBytes + offset, len);
+        Uint8List.view(_buffer.buffer, _buffer.offsetInBytes + _offset, len);
     return bytes;
   }
 
-  int _length;
 }
 
 class FileInputStream extends InputStream {
+  static const int _kDefaultBufferSize = 4096;
   final String path;
   final ByteOrder byteOrder;
-  RandomAccessFile _file;
-  int _fileSize = 0;
+  late final RandomAccessFile _file;
+  late final int _fileSize;
   int _filePosition = 0;
-  Uint8List _buffer;
+  final Uint8List _buffer;
   int _bufferSize = 0;
   int _bufferPosition = 0;
-  int _maxBufferSize;
-  static const int _kDefaultBufferSize = 4096;
 
   FileInputStream(this.path,
-      {this.byteOrder = ByteOrder.big_endian,
-      int bufferSize = _kDefaultBufferSize}) {
-    _maxBufferSize = bufferSize;
-    _buffer = Uint8List(_maxBufferSize);
+      {this.byteOrder = ByteOrder.bigEndian,
+      int bufferSize = _kDefaultBufferSize}):
+        _buffer = Uint8List(bufferSize) {
     _file = File(path).openSync();
     _fileSize = _file.lengthSync();
     _readBuffer();
@@ -279,7 +275,6 @@ class FileInputStream extends InputStream {
 
   void close() {
     _file.closeSync();
-    _fileSize = 0;
   }
 
   @override
@@ -325,9 +320,9 @@ class FileInputStream extends InputStream {
   }
 
   @override
-  void rewind([int count = 1]) {
-    if (_bufferPosition - count < 0) {
-      var remaining = (_bufferPosition - count).abs();
+  void rewind([int length = 1]) {
+    if (_bufferPosition - length < 0) {
+      var remaining = (_bufferPosition - length).abs();
       _filePosition = _filePosition - _bufferSize - remaining;
       if (_filePosition < 0) {
         _filePosition = 0;
@@ -336,7 +331,7 @@ class FileInputStream extends InputStream {
       _readBuffer();
       return;
     }
-    _bufferPosition -= count;
+    _bufferPosition -= length;
   }
 
   @override
@@ -365,7 +360,7 @@ class FileInputStream extends InputStream {
       b1 = readByte();
       b2 = readByte();
     }
-    if (byteOrder == ByteOrder.big_endian) {
+    if (byteOrder == ByteOrder.bigEndian) {
       return (b1 << 8) | b2;
     }
     return (b2 << 8) | b1;
@@ -390,7 +385,7 @@ class FileInputStream extends InputStream {
       b4 = readByte();
     }
 
-    if (byteOrder == ByteOrder.big_endian) {
+    if (byteOrder == ByteOrder.bigEndian) {
       return (b1 << 24) | (b2 << 16) | (b3 << 8) | b4;
     }
     return (b4 << 24) | (b3 << 16) | (b2 << 8) | b1;
@@ -427,7 +422,7 @@ class FileInputStream extends InputStream {
       b8 = readByte();
     }
 
-    if (byteOrder == ByteOrder.big_endian) {
+    if (byteOrder == ByteOrder.bigEndian) {
       return (b1 << 56) |
           (b2 << 48) |
           (b3 << 40) |
@@ -463,9 +458,9 @@ class FileInputStream extends InputStream {
       return bytes;
     }
 
-    var total_remaining = fileRemaining + _remainingBufferSize;
-    if (length > total_remaining) {
-      length = total_remaining;
+    var totalRemaining = fileRemaining + _remainingBufferSize;
+    if (length > totalRemaining) {
+      length = totalRemaining;
     }
 
     final bytes = Uint8List(length);
@@ -498,12 +493,12 @@ class FileInputStream extends InputStream {
     return readBytes(_fileSize);
   }
 
-  /// Read a null-terminated string, or if [len] is provided, that number of
+  /// Read a null-terminated string, or if [length] is provided, that number of
   /// bytes returned as a string.
   @override
-  String readString({int size, bool utf8 = true}) {
+  String readString({int length = -1, bool utf8 = true}) {
     final codes = <int>[];
-    if (size == null) {
+    if (length == -1) {
       while (!isEOS) {
         var c = readByte();
         if (!utf8) {
@@ -516,12 +511,12 @@ class FileInputStream extends InputStream {
         codes.add(c);
       }
     } else {
-      while (size > 0) {
+      while (length > 0) {
         var c = readByte();
-        size--;
+        length--;
         if (!utf8) {
           var c2 = readByte();
-          size--;
+          length--;
           c = (c2 << 8) | c;
         }
         if (c == 0) {

@@ -1,8 +1,7 @@
 import 'dart:io';
-import 'dart:convert';
 import 'dart:typed_data';
-import 'package:pointycastle/api.dart';
-import 'package:xml/xml.dart' as xml;
+import "package:pointycastle/pointycastle.dart";
+import 'package:xml/xml.dart';
 import 'input_stream.dart';
 
 class Key {
@@ -13,36 +12,36 @@ class Key {
 }
 
 class Record {
-  int comp_size;
-  int decomp_size;
-  Record(this.comp_size, this.decomp_size);
+  int compSize;
+  int decompSize;
+  Record(this.compSize, this.decompSize);
 }
 
 class MdictReader {
   String path;
-  Map<String, String> _header;
-  List<Key> _key_list;
-  List<Record> _record_list;
-  int _record_block_offset;
+  late final Map<String, String> _header;
+  late final List<Key> _keyList;
+  late final List<Record> _recordList;
+  late final int _recordBlockOffset;
 
   MdictReader(this.path) {
-    var _in = FileInputStream(path, bufferSize: 64 * 1024);
-    _header = _read_header(_in);
-    _key_list = _read_keys(_in);
-    _record_list = _read_records(_in);
-    _record_block_offset = _in.position;
-    _in.close();
+    var fin = FileInputStream(path, bufferSize: 64 * 1024);
+    _header = _readHeader(fin);
+    _keyList = _read_keys(fin);
+    _recordList = _readRecords(fin);
+    _recordBlockOffset = fin.position;
+    fin.close();
   }
 
   List<String> keys() {
-    return _key_list.map((key) => key.key).toList();
+    return _keyList.map((key) => key.key).toList();
   }
 
   dynamic query(String word) {
     var mdd = path.endsWith('.mdd');
-    var keys = _key_list.where((key) => key.key == word).toList();
+    var keys = _keyList.where((key) => key.key == word).toList();
     var records = keys
-        .map((key) => _read_record(key.key, key.offset, key.length, mdd))
+        .map((key) => _readRecord(key.key, key.offset, key.length, mdd))
         .toList();
     if (mdd) {
       return records[0];
@@ -50,130 +49,130 @@ class MdictReader {
     return records.join('\n---\n');
   }
 
-  Map<String, String> _read_header(FileInputStream _in) {
-    var header_length = _in.readUint32();
-    var header = _in.readString(size: header_length, utf8: false);
-    _in.skip(4);
-    return _parse_header(header);
+  Map<String, String> _readHeader(FileInputStream fin) {
+    var headerLength = fin.readUint32();
+    var header = fin.readString(length: headerLength, utf8: false);
+    fin.skip(4);
+    return _parseHeader(header);
   }
 
-  Map<String, String> _parse_header(String header) {
+  Map<String, String> _parseHeader(String header) {
     var attributes = <String, String>{};
-    var doc = xml.parse(header);
-    doc.rootElement.attributes.forEach((a) {
+    var doc = XmlDocument.parse(header);
+    for (var a in doc.rootElement.attributes) {
       attributes[a.name.local] = a.value;
-    });
+    }
     return attributes;
   }
 
-  List<Key> _read_keys(FileInputStream _in) {
+  List<Key> _read_keys(FileInputStream fin) {
     var encrypted = _header['Encrypted'] == '2';
     var utf8 = _header['Encoding'] == 'UTF-8';
-    var key_num_blocks = _in.readUint64();
-    var key_num_entries = _in.readUint64();
-    var key_index_decomp_len = _in.readUint64();
-    var key_index_comp_len = _in.readUint64();
-    var key_blocks_len = _in.readUint64();
-    _in.skip(4);
-    var comp_size = List<int>(key_num_blocks);
-    var decomp_size = List<int>(key_num_blocks);
-    var num_entries = List<int>(key_num_blocks);
-    var index_comp_block = _in.readBytes(key_index_comp_len);
+    var keyNumBlocks = fin.readUint64();
+    var keyNumEntries = fin.readUint64();
+    var keyIndexDecompLen = fin.readUint64();
+    var keyIndexCompLen = fin.readUint64();
+    var keyBlocksLen = fin.readUint64();
+    fin.skip(4);
+    var compSize = List.filled(keyNumBlocks, 0);
+    var decompSize = List.filled(keyNumBlocks, 0);
+    var numEntries = List.filled(keyNumBlocks, 0);
+    var indexCompBlock = fin.readBytes(keyIndexCompLen);
     if (encrypted) {
-      var key = _compute_key(index_comp_block);
-      _decrypt_block(key, index_comp_block, 8);
+      var key = _computeKey(indexCompBlock);
+      _decryptBlock(key, indexCompBlock, 8);
     }
-    var index_ds = _decompress_block(index_comp_block);
-    for (var i = 0; i < key_num_blocks; i++) {
-      num_entries[i] = index_ds.readUint64();
-      var first_length = index_ds.readUint16() + 1;
+    var indexDs = _decompressBlock(indexCompBlock);
+    for (var i = 0; i < keyNumBlocks; i++) {
+      numEntries[i] = indexDs.readUint64();
+      var firstLength = indexDs.readUint16() + 1;
       if (!utf8) {
-        first_length = first_length * 2;
+        firstLength = firstLength * 2;
       }
-      var first_word = index_ds.readString(size: first_length, utf8: utf8);
-      var last_length = index_ds.readUint16() + 1;
+      var firstWord = indexDs.readString(length: firstLength, utf8: utf8);
+      var lastLength = indexDs.readUint16() + 1;
       if (!utf8) {
-        last_length = last_length * 2;
+        lastLength = lastLength * 2;
       }
-      var last_word = index_ds.readString(size: last_length, utf8: utf8);
-      comp_size[i] = index_ds.readUint64();
-      decomp_size[i] = index_ds.readUint64();
+      var lastWord = indexDs.readString(length: lastLength, utf8: utf8);
+      compSize[i] = indexDs.readUint64();
+      decompSize[i] = indexDs.readUint64();
     }
-    var key_list = <Key>[];
-    for (var i = 0; i < key_num_blocks; i++) {
-      var key_comp_block = _in.readBytes(comp_size[i]);
-      var block_in = _decompress_block(key_comp_block);
-      for (var j = 0; j < num_entries[i]; j++) {
-        var offset = block_in.readUint64();
-        var word = block_in.readString(utf8: utf8);
-        if (key_list.isNotEmpty) {
-          key_list[key_list.length - 1].length =
-              offset - key_list[key_list.length - 1].offset;
+    var keyList = <Key>[];
+    for (var i = 0; i < keyNumBlocks; i++) {
+      var keyCompBlock = fin.readBytes(compSize[i]);
+      var blockIn = _decompressBlock(keyCompBlock);
+      for (var j = 0; j < numEntries[i]; j++) {
+        var offset = blockIn.readUint64();
+        var word = blockIn.readString(utf8: utf8);
+        if (keyList.isNotEmpty) {
+          keyList[keyList.length - 1].length =
+              offset - keyList[keyList.length - 1].offset;
         }
-        key_list.add(Key(word, offset));
+        keyList.add(Key(word, offset));
       }
     }
-    return key_list;
+    return keyList;
   }
 
-  List<Record> _read_records(FileInputStream _in) {
-    var record_num_blocks = _in.readUint64();
-    var record_num_entries = _in.readUint64();
-    var record_index_len = _in.readUint64();
-    var record_blocks_len = _in.readUint64();
-    var record_list = <Record>[];
-    for (var i = 0; i < record_num_blocks; i++) {
-      var record_block_comp_size = _in.readUint64();
-      var record_block_decomp_size = _in.readUint64();
-      record_list.add(Record(record_block_comp_size, record_block_decomp_size));
+  List<Record> _readRecords(FileInputStream fin) {
+    var recordNumBlocks = fin.readUint64();
+    var recordNumEntries = fin.readUint64();
+    var recordIndexLen = fin.readUint64();
+    var recordBlocksLen = fin.readUint64();
+    var recordList = <Record>[];
+    for (var i = 0; i < recordNumBlocks; i++) {
+      var recordBlockCompSize = fin.readUint64();
+      var recordBlockDecompSize = fin.readUint64();
+      recordList.add(Record(recordBlockCompSize, recordBlockDecompSize));
     }
-    return record_list;
+    return recordList;
   }
 
-  dynamic _read_record(String word, int offset, int length, bool mdd) {
-    var compressed_offset = 0;
-    var decompressed_offset = 0;
-    var compressed_size = 0;
-    var decompressed_size = 0;
-    for (var record in _record_list) {
-      compressed_size = record.comp_size;
-      decompressed_size = record.decomp_size;
-      if ((decompressed_offset + decompressed_size) > offset) {
+  dynamic _readRecord(String word, int offset, int length, bool mdd) {
+    var compressedOffset = 0;
+    var decompressedOffset = 0;
+    var compressedSize = 0;
+    var decompressedSize = 0;
+    for (var record in _recordList) {
+      compressedSize = record.compSize;
+      decompressedSize = record.decompSize;
+      if ((decompressedOffset + decompressedSize) > offset) {
         break;
       }
-      decompressed_offset += decompressed_size;
-      compressed_offset += compressed_size;
+      decompressedOffset += decompressedSize;
+      compressedOffset += compressedSize;
     }
-    var _in = File(path).openSync();
-    _in.setPositionSync(_record_block_offset + compressed_offset);
-    var block = _in.readSync(compressed_size);
-    _in.closeSync();
-    var block_in = _decompress_block(block);
-    block_in.skip(offset - decompressed_offset);
+    var fin = File(path).openSync();
+    fin.setPositionSync(_recordBlockOffset + compressedOffset);
+    var block = fin.readSync(compressedSize);
+    fin.closeSync();
+    var blockIn = _decompressBlock(block);
+    blockIn.skip(offset - decompressedOffset);
     if (mdd) {
-      var record_block = block_in.toUint8List();
+      var recordBlock = blockIn.toUint8List();
       if (length > 0) {
-        return record_block.sublist(0, length);
+        return recordBlock.sublist(0, length);
       } else {
-        return record_block;
+        return recordBlock;
       }
     } else {
       var utf8 = _header['Encoding'] == 'UTF-8';
-      return block_in.readString(size: length, utf8: utf8);
+      return blockIn.readString(length: length, utf8: utf8);
     }
   }
 
-  InputStream _decompress_block(Uint8List comp_block) {
-    var flag = comp_block[0];
-    var data = comp_block.sublist(8);
+  InputStream _decompressBlock(Uint8List compBlock) {
+    var flag = compBlock[0];
+    var data = compBlock.sublist(8);
     if (flag == 2) {
-      return BytesInputStream(zlib.decoder.convert(data));
+      return BytesInputStream(Uint8List.fromList(zlib.decoder.convert(data)));
     } else {
       return BytesInputStream(data);
     }
   }
 
-  void _decrypt_block(Uint8List key, Uint8List data, int offset) {
+  void _decryptBlock(Uint8List key, Uint8List data, int offset) {
     var previous = 0x36;
     for (var i = 0; i < data.length - offset; i++) {
       var t = (data[i + offset] >> 4 | data[i + offset] << 4) & 0xff;
@@ -183,7 +182,7 @@ class MdictReader {
     }
   }
 
-  Uint8List _compute_key(Uint8List data) {
+  Uint8List _computeKey(Uint8List data) {
     var ripemd128 = Digest('RIPEMD-128');
     ripemd128.update(data, 4, 4);
     ripemd128.update(
