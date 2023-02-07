@@ -175,7 +175,7 @@ class MdictReader {
     var flag = compBlock[0];
     var data = compBlock.sublist(8);
     if (flag == 1) {
-      throw new FormatException("LZO compression is not supported");
+      throw FormatException("LZO compression is not supported");
     } else if (flag == 2) {
       return BytesInputStream(Uint8List.fromList(zlib.decoder.convert(data)));
     } else {

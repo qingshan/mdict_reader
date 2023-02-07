@@ -26,7 +26,7 @@ void main(List<String> args) {
       var record = mdict.query(word);
       var sounds = parseSounds(record);
       sounds.forEach((sound) {
-        print(word + "\t" + sound);
+        print("$word\t$sound");
       });
     });
   } else if ('export' == command) {
