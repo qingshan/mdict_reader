@@ -63,7 +63,7 @@ class BytesInputStream extends InputStream {
         _start = start,
         _offset = start,
         _length = length ?? buffer.length;
-  
+
   ///  The current read position relative to the start of the buffer.
   @override
   int get position => _offset - _start;
@@ -169,12 +169,11 @@ class BytesInputStream extends InputStream {
     } else {
       while (length > 0) {
         var c = readByte();
-        length--;
         if (!utf8) {
           var c2 = readByte();
-          length--;
           c = (c2 << 8) | c;
         }
+        length--;
         if (c == 0) {
           break;
         }
@@ -513,12 +512,11 @@ class FileInputStream extends InputStream {
     } else {
       while (length > 0) {
         var c = readByte();
-        length--;
         if (!utf8) {
           var c2 = readByte();
-          length--;
           c = (c2 << 8) | c;
         }
+        length--;
         if (c == 0) {
           break;
         }
@@ -540,4 +538,3 @@ class FileInputStream extends InputStream {
     _filePosition += _bufferSize;
   }
 }
-

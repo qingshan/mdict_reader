@@ -20,6 +20,8 @@ class Record {
 class MdictReader {
   String path;
   late final Map<String, String> _header;
+  late final double _version;
+  late final int _numberWidth;
   late final List<Key> _keyList;
   late final List<Record> _recordList;
   late final int _recordBlockOffset;
@@ -27,6 +29,8 @@ class MdictReader {
   MdictReader(this.path) {
     var fin = FileInputStream(path, bufferSize: 64 * 1024);
     _header = _readHeader(fin);
+    _version = double.parse(_header['GeneratedByEngineVersion']!);
+    _numberWidth = _version >= 2.0 ? 8 : 4;
     _keyList = _read_keys(fin);
     _recordList = _readRecords(fin);
     _recordBlockOffset = fin.position;
@@ -44,6 +48,9 @@ class MdictReader {
         .map((key) => _readRecord(key.key, key.offset, key.length, mdd))
         .toList();
     if (mdd) {
+      if (records.length == 0) {
+        return null;
+      }
       return records[0];
     }
     return records.join('\n---\n');
@@ -67,13 +74,18 @@ class MdictReader {
 
   List<Key> _read_keys(FileInputStream fin) {
     var encrypted = _header['Encrypted'] == '2';
+    var encrypted_value = _header['Encrypted'];
     var utf8 = _header['Encoding'] == 'UTF-8';
-    var keyNumBlocks = fin.readUint64();
-    var keyNumEntries = fin.readUint64();
-    var keyIndexDecompLen = fin.readUint64();
-    var keyIndexCompLen = fin.readUint64();
-    var keyBlocksLen = fin.readUint64();
-    fin.skip(4);
+    var keyNumBlocks = _readNumber(fin);
+    var keyNumEntries = _readNumber(fin);
+    if (_version >= 2.0) {
+      _readNumber(fin);
+    }
+    var keyIndexCompLen = _readNumber(fin);
+    var keyBlocksLen = _readNumber(fin);
+    if (_version >= 2.0) {
+      fin.skip(4);
+    }
     var compSize = List.filled(keyNumBlocks, 0);
     var decompSize = List.filled(keyNumBlocks, 0);
     var numEntries = List.filled(keyNumBlocks, 0);
@@ -82,28 +94,24 @@ class MdictReader {
       var key = _computeKey(indexCompBlock);
       _decryptBlock(key, indexCompBlock, 8);
     }
-    var indexDs = _decompressBlock(indexCompBlock);
+    var indexDs = _version >= 2.0 ? _decompressBlock(indexCompBlock)
+            : BytesInputStream(indexCompBlock);
     for (var i = 0; i < keyNumBlocks; i++) {
-      numEntries[i] = indexDs.readUint64();
-      var firstLength = indexDs.readUint16() + 1;
-      if (!utf8) {
-        firstLength = firstLength * 2;
-      }
-      var firstWord = indexDs.readString(length: firstLength, utf8: utf8);
-      var lastLength = indexDs.readUint16() + 1;
-      if (!utf8) {
-        lastLength = lastLength * 2;
-      }
-      var lastWord = indexDs.readString(length: lastLength, utf8: utf8);
-      compSize[i] = indexDs.readUint64();
-      decompSize[i] = indexDs.readUint64();
+      numEntries[i] = _readNumber(indexDs);
+      var firstWordSize = _readShort(indexDs);
+      var firstWord = indexDs.readString(length: firstWordSize, utf8: utf8);
+      var lastWordSize = _readShort(indexDs);
+      var lastWord = indexDs.readString(length: lastWordSize, utf8: utf8);
+      print("first: size=$firstWordSize word=$firstWord last: size=$lastWordSize word=$lastWord");
+      compSize[i] = _readNumber(indexDs);
+      decompSize[i] = _readNumber(indexDs);
     }
     var keyList = <Key>[];
     for (var i = 0; i < keyNumBlocks; i++) {
       var keyCompBlock = fin.readBytes(compSize[i]);
       var blockIn = _decompressBlock(keyCompBlock);
       for (var j = 0; j < numEntries[i]; j++) {
-        var offset = blockIn.readUint64();
+        var offset = _readNumber(blockIn);
         var word = blockIn.readString(utf8: utf8);
         if (keyList.isNotEmpty) {
           keyList[keyList.length - 1].length =
@@ -111,19 +119,20 @@ class MdictReader {
         }
         keyList.add(Key(word, offset));
       }
+      break;
     }
     return keyList;
   }
 
   List<Record> _readRecords(FileInputStream fin) {
-    var recordNumBlocks = fin.readUint64();
-    var recordNumEntries = fin.readUint64();
-    var recordIndexLen = fin.readUint64();
-    var recordBlocksLen = fin.readUint64();
+    var recordNumBlocks = _readNumber(fin);
+    var recordNumEntries = _readNumber(fin);
+    var recordIndexLen = _readNumber(fin);
+    var recordBlocksLen = _readNumber(fin);
     var recordList = <Record>[];
     for (var i = 0; i < recordNumBlocks; i++) {
-      var recordBlockCompSize = fin.readUint64();
-      var recordBlockDecompSize = fin.readUint64();
+      var recordBlockCompSize = _readNumber(fin);
+      var recordBlockDecompSize = _readNumber(fin);
       recordList.add(Record(recordBlockCompSize, recordBlockDecompSize));
     }
     return recordList;
@@ -165,7 +174,9 @@ class MdictReader {
   InputStream _decompressBlock(Uint8List compBlock) {
     var flag = compBlock[0];
     var data = compBlock.sublist(8);
-    if (flag == 2) {
+    if (flag == 1) {
+      throw new FormatException("LZO compression is not supported");
+    } else if (flag == 2) {
       return BytesInputStream(Uint8List.fromList(zlib.decoder.convert(data)));
     } else {
       return BytesInputStream(data);
@@ -190,5 +201,13 @@ class MdictReader {
     var key = Uint8List(16);
     ripemd128.doFinal(key, 0);
     return key;
+  }
+
+  int _readNumber(InputStream ins) {
+    return _numberWidth == 8 ? ins.readUint64() : ins.readUint32();
+  }
+
+  int _readShort(InputStream ins) {
+    return _numberWidth == 8 ? ins.readUint16() : ins.readByte();
   }
 }
