@@ -3,6 +3,8 @@ Mdict Reader
 
 A dart library for reading mdict files. support MDX/MDD file formats.
 
+[![Pub Package](https://img.shields.io/pub/v/mdict_reader.svg)](https://pub.dev/packages/mdict_reader)
+
 Tutorial
 --------
 
