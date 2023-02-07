@@ -1,6 +1,6 @@
 name: mdict_reader
 description: A dart library for reading mdict files. support MDX/MDD file formats.
-version: 1.0.0
+version: 1.1.0
 homepage: https://github.com/qingshan/mdict_reader
 
 environment:
